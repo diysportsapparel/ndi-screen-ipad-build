@@ -71,6 +71,7 @@ enum CaptureResolution: String, CaseIterable, Codable, Identifiable {
 enum BroadcastAudioSource: String, CaseIterable, Codable, Identifiable {
     case appAudio
     case microphone
+    case testTone
     case off
 
     var id: String { rawValue }
@@ -81,6 +82,8 @@ enum BroadcastAudioSource: String, CaseIterable, Codable, Identifiable {
             return "App/系统声音"
         case .microphone:
             return "麦克风"
+        case .testTone:
+            return "测试音"
         case .off:
             return "静音"
         }

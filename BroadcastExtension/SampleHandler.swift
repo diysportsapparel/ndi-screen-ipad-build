@@ -1,5 +1,8 @@
 import AVFoundation
 import CoreMedia
+import Darwin
+import Dispatch
+import Foundation
 import os.log
 import ReplayKit
 
@@ -15,8 +18,12 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private var sender: NDISenderBridge?
     private var audioConverter: AVAudioConverter?
     private var converterInputFormat: AVAudioFormat?
+    private let toneQueue = DispatchQueue(label: "com.example.ndiscreen.tone")
+    private var toneTimer: DispatchSourceTimer?
+    private var tonePhase: Double = 0
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
+        stopTestTone()
         settings = BroadcastSettings.load()
         sender = nil
         audioConverter = nil
@@ -56,6 +63,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
     }
 
     override func broadcastFinished() {
+        stopTestTone()
         sender?.stop()
         sender = nil
         audioConverter = nil
@@ -89,7 +97,63 @@ final class SampleHandler: RPBroadcastSampleHandler {
                 outputSize.width,
                 outputSize.height
             )
+        } else if settings.audioSource == .testTone {
+            startTestTone()
         }
+    }
+
+    private func startTestTone() {
+        guard toneTimer == nil else { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: toneQueue)
+        timer.schedule(
+            deadline: .now(),
+            repeating: .milliseconds(20),
+            leeway: .milliseconds(2)
+        )
+        timer.setEventHandler { [weak self] in
+            self?.emitTestToneFrame()
+        }
+        toneTimer = timer
+        timer.resume()
+        os_log("NDI test tone started")
+    }
+
+    private func stopTestTone() {
+        toneTimer?.cancel()
+        toneTimer = nil
+        tonePhase = 0
+    }
+
+    private func emitTestToneFrame() {
+        guard let sender else { return }
+        let format = targetAudioFormat
+
+        let frameCount: AVAudioFrameCount = 960
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: frameCount
+        ) else {
+            return
+        }
+        buffer.frameLength = frameCount
+
+        guard let channels = buffer.floatChannelData else { return }
+        let channelCount = Int(format.channelCount)
+        let phaseIncrement = 2.0 * Double.pi * 440.0 / format.sampleRate
+
+        for frame in 0..<Int(frameCount) {
+            let sample = Float(sin(tonePhase)) * 0.12
+            for channel in 0..<channelCount {
+                channels[channel][frame] = sample
+            }
+            tonePhase += phaseIncrement
+            if tonePhase >= 2.0 * Double.pi {
+                tonePhase -= 2.0 * Double.pi
+            }
+        }
+
+        sender.send(buffer, timestamp: .zero)
     }
 
     private func sendAudio(_ sampleBuffer: CMSampleBuffer) {
