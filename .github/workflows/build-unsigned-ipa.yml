@@ -1,0 +1,100 @@
+name: Build unsigned iPad IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcode-select -p
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Prepare NDI SDK
+        env:
+          NDI_SDK_URL: ${{ secrets.NDI_SDK_URL }}
+          GH_TOKEN: ${{ secrets.NDI_REPO_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+
+          if [ -f "Vendor/NDI/include/Processing.NDI.Lib.h" ] && \
+             [ -f "Vendor/NDI/lib/iOS/libndi_ios.a" ]; then
+            echo "NDI SDK already exists in the repository."
+            exit 0
+          fi
+
+          mkdir -p /tmp/ndi-download
+
+          if [ -n "${NDI_SDK_URL:-}" ]; then
+            curl --fail --location "$NDI_SDK_URL" \
+              --output /tmp/ndi-download/ndi-sdk.zip
+          else
+            gh release download ndi-sdk \
+              --repo diysportsapparel/ndi-screen-ipad \
+              --pattern '*.zip' \
+              --dir /tmp/ndi-download \
+              --clobber
+          fi
+
+          ZIP_FILE="$(find /tmp/ndi-download -name '*.zip' -print -quit)"
+          test -n "$ZIP_FILE"
+          bash ./scripts/prepare-ndi-sdk.sh "$ZIP_FILE"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive unsigned app
+        run: |
+          set -euo pipefail
+
+          xcodebuild \
+            -project NDIScreenBroadcast.xcodeproj \
+            -scheme NDIScreen \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/NDIScreen.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+
+          APP_PATH="build/NDIScreen.xcarchive/Products/Applications/NDIScreen.app"
+          test -d "$APP_PATH"
+          test -d "$APP_PATH/PlugIns/NDIScreenBroadcast.appex"
+
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+
+          cd build
+          /usr/bin/zip -qry NDIScreen-unsigned.ipa Payload
+          ls -lh NDIScreen-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NDIScreen-unsigned-ipa
+          path: build/NDIScreen-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+

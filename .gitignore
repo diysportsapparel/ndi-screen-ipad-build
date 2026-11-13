@@ -1,0 +1,9 @@
+build/
+DerivedData/
+*.xcodeproj/
+ExportOptions.plist
+Vendor/NDI/include/Processing.NDI.*.h
+Vendor/NDI/lib/iOS/*.a
+Vendor/NDI/lib/iOS/*.xcframework
+.DS_Store
+
